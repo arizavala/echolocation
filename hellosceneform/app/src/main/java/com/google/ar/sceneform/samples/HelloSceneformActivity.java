@@ -38,12 +38,17 @@ import com.google.ar.core.Session;
 import com.google.ar.core.exceptions.CameraNotAvailableException;
 import com.google.ar.sceneform.AnchorNode;
 import com.google.ar.sceneform.ArSceneView;
+import com.google.ar.sceneform.FrameTime;
+import com.google.ar.sceneform.Scene;
 import com.google.ar.sceneform.rendering.ModelRenderable;
 import com.google.ar.sceneform.ux.ArFragment;
 import com.google.ar.sceneform.ux.TransformableNode;
 
 import java.text.DecimalFormat;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.function.DoubleToIntFunction;
 
 /**
  * This is an example activity that uses the Sceneform UX package to make common AR tasks easier.
@@ -52,11 +57,39 @@ public class HelloSceneformActivity extends AppCompatActivity {
   private static final String TAG = HelloSceneformActivity.class.getSimpleName();
   private static final double MIN_OPENGL_VERSION = 3.0;
 
+  private static final double PERCENT_OF_HITPOINT_VIEW = .05;
+  private static final int X_HIT_AREAS = 3;
+  private static final int Y_HIT_AREAS = 3;
+
   private ArFragment arFragment;
+  private ArSceneView arSceneView;
   private ModelRenderable andyRenderable;
   private Session session;
+
+  // Camera info
   private int cameraHeight;
   private int cameraWidth;
+  LinkedList<Integer> listOfXCenters = new LinkedList<>();
+  LinkedList<Integer> listOfYCenters = new LinkedList<>();
+  private int XHitAreaDelta;
+  private int YHitAreaDelta;
+
+  // Frame info
+  private float lastFrameStart = 0;
+  private float timeBetweenFrames = 0;
+  private float maxTimeBetweenFrames = 0;
+  private int renderedFrames, droppedFrames = 0;
+
+  // Text views
+  private TextView topLeftTextView;
+  private TextView topCenterTextView;
+  private TextView topRightTextView;
+  private TextView centerLeftTextView;
+  private TextView centerCenterTextView;
+  private TextView centerRightTextView;
+  private TextView bottomLeftTextView;
+  private TextView bottomCenterTextView;
+  private TextView bottomRightTextView;
 
     @Override
   @SuppressWarnings({"AndroidApiChecker", "FutureReturnValueIgnored"})
@@ -133,8 +166,23 @@ public class HelloSceneformActivity extends AppCompatActivity {
         }
     }
 
-      // Create task that runs every X time
-      Handler handler = new Handler();
+    arSceneView = arFragment.getArSceneView();
+    if (arSceneView == null)
+    {
+        PrintDebug("Cant find arSceneView");
+        try{wait(5000);}
+        catch (InterruptedException e) {
+            e.printStackTrace();
+            return;
+        }
+    }
+
+    // Add scene update listener which is called every time the scene changes
+    arSceneView.getScene().addOnUpdateListener(this::OnSceneUpdate);
+
+    // REMOVED HANDLER TO TEST ONSCENEUPDATE
+    // Create task that runs every X time
+    /*  Handler handler = new Handler();
       Runnable runnable = new Runnable() {
           @Override
           public void run() {
@@ -144,7 +192,7 @@ public class HelloSceneformActivity extends AppCompatActivity {
       };
 
         //Start
-      handler.postDelayed(runnable, 500);
+      handler.postDelayed(runnable, 500);*/
   }
 
   /**
@@ -180,63 +228,52 @@ public class HelloSceneformActivity extends AppCompatActivity {
   {
       if (session == null)
       {
-          if(!ObtainSession());
-      }
-
-      // RAYCAST
-      try {
-          Frame frame = session.update();
-
-          // Get the hit test from the midPoint
-          List<HitResult> hitResults = frame.hitTest(cameraWidth/2, cameraHeight/2);
-          if (hitResults.isEmpty())
+          if(!InitializeSession())
           {
-              PrintDebug("List of hitResults empty");
               return;
           }
-
-          // Create the Anchor on first hitResult.
-          Anchor anchor = hitResults.get(0).createAnchor();
-          AnchorNode anchorNode = new AnchorNode(anchor);
-          anchorNode.setParent(arFragment.getArSceneView().getScene());
-
-          // Get Pose
-          Pose startPose = anchor.getPose();
-
-          // Write coordinates to TextBox
-          double x, y, z, distance;
-          x = startPose.tx();
-          y = startPose.ty();
-          z = startPose.tz();
-          //String message = "X = " + x + "\bY = " + y + "\bZ = " + z +
-          //        "\bDist = " + Math.sqrt(x*x + y*y + z*z);
-
-          distance = Math.sqrt(x*x + y*y + z*z);
-          String message = "Dist = " + new DecimalFormat("#.0#").format(distance);
-
-          // Capture the layout's TextView and set the string as its text
-          PrintDebug(message);
       }
-      catch (CameraNotAvailableException e) {
-          e.printStackTrace();
+
+      // Frame frame = session.update(); //  OLD BEHAVIOR
+
+      // Get the hit test from the midPoint
+      List<HitResult> hitResults = arSceneView.getArFrame().hitTest(cameraWidth/2, cameraHeight/2);
+      if (hitResults.isEmpty())
+      {
+          PrintDebug("List of hitResults empty");
+          return;
       }
+
+      /* OLD BEHAVIOR REPLACED WITH HIT RESULT.GETDISTANCE
+      // Create the Anchor on first hitResult.
+      Anchor anchor = hitResults.get(0).createAnchor();
+      AnchorNode anchorNode = new AnchorNode(anchor);
+      anchorNode.setParent(arFragment.getArSceneView().getScene());
+
+      // Get Pose
+      Pose startPose = anchor.getPose();
+
+      // Write coordinates to TextBox
+      double x, y, z, distance;
+      x = startPose.tx();
+      y = startPose.ty();
+      z = startPose.tz();
+      //String message = "X = " + x + "\bY = " + y + "\bZ = " + z +
+      //        "\bDist = " + Math.sqrt(x*x + y*y + z*z);
+
+      distance = Math.sqrt(x*x + y*y + z*z);
+*/
+      double    distance = hitResults.get(0).getDistance();
+      String message = "Dist = " + new DecimalFormat("#.0#").format(distance);
+
+      // Capture the layout's TextView and set the string as its text
+      PrintDebug(message);
   }
 
   // Returns true if session was obtained;
-  boolean ObtainSession()
+  boolean InitializeSession()
   {
       // Get session
-      ArSceneView arSceneView = arFragment.getArSceneView();
-      if (arSceneView == null)
-      {
-          PrintDebug("Cant find arSceneView");
-          try{wait(5000);}
-          catch (InterruptedException e) {
-              e.printStackTrace();
-              return false;
-          }
-      }
-
       try{
           session = arSceneView.getSession();
           if (session == null)
@@ -262,20 +299,157 @@ public class HelloSceneformActivity extends AppCompatActivity {
           }
       }
 
-    // Get camera pixel resolution
+    // Get Camera info from the Session and set camera to autofocus
     cameraHeight = session.getCameraConfig().getImageSize().getHeight();
     cameraWidth = session.getCameraConfig().getImageSize().getWidth();
 
-    // Set focus mode to auto
     Config configuration = session.getConfig();
     configuration.setFocusMode(Config.FocusMode.AUTO);
 
+    // Calculate the X and Y lists of points
+    for(int i = 0; i < X_HIT_AREAS; i++) {
+        listOfXCenters.add((i + 1) * cameraWidth / (X_HIT_AREAS + 1));
+    }
+    for(int i = 0; i < Y_HIT_AREAS; i++) {
+        listOfYCenters.add((i + 1) * cameraHeight / (Y_HIT_AREAS + 1));
+    }
+
+    // Calculate Width and Height of each Hit Area
+    XHitAreaDelta = (int) (cameraWidth * PERCENT_OF_HITPOINT_VIEW / (2 * X_HIT_AREAS));
+    YHitAreaDelta = (int) (cameraHeight * PERCENT_OF_HITPOINT_VIEW / (2 * Y_HIT_AREAS));
+
+    // Obtain TextView Controls
+    topLeftTextView = findViewById(R.id.TopLeft);
+    topCenterTextView = findViewById(R.id.TopCenter);
+    topRightTextView = findViewById(R.id.TopRight);
+    centerLeftTextView = findViewById(R.id.CenterLeft);
+    centerCenterTextView = findViewById(R.id.CenterCenter);
+    centerRightTextView = findViewById(R.id.CenterRight);
+    bottomLeftTextView = findViewById(R.id.BottomLeft);
+    bottomCenterTextView = findViewById(R.id.BottomCenter);
+    bottomRightTextView = findViewById(R.id.BottomRight);
+
     return true;
+  }
+
+  void OnSceneUpdate(FrameTime frameTime)
+  {
+      if (session == null)
+      {
+          if(!InitializeSession())
+          {
+              return;
+          }
+      }
+
+      if (lastFrameStart != 0)
+      {
+          timeBetweenFrames = frameTime.getStartSeconds() - lastFrameStart;
+          if (frameTime.getDeltaSeconds() > maxTimeBetweenFrames)
+          {
+              maxTimeBetweenFrames = timeBetweenFrames;
+          }
+      }
+      else
+      {
+          lastFrameStart = frameTime.getStartSeconds();
+      }
+
+      // Get the AR Frame
+      Frame frame = arSceneView.getArFrame();
+
+      // DEBUG info
+      String message = "Coordinates: \n" + "X:" + listOfXCenters.get(0) + " Y:" + listOfYCenters.get(0) +
+              "\nX:" + listOfXCenters.get(0) + " Y:" + listOfYCenters.get(0) +
+              "\nX:" + listOfXCenters.get(1) + " Y:" + listOfYCenters.get(0) +
+              "\nX:" + listOfXCenters.get(2) + " Y:" + listOfYCenters.get(0) +
+              "\nX:" + listOfXCenters.get(0) + " Y:" + listOfYCenters.get(1) +
+              "\nX:" + listOfXCenters.get(1) + " Y:" + listOfYCenters.get(1) +
+              "\nX:" + listOfXCenters.get(2) + " Y:" + listOfYCenters.get(1) +
+              "\nX:" + listOfXCenters.get(0) + " Y:" + listOfYCenters.get(2) +
+              "\nX:" + listOfXCenters.get(1) + " Y:" + listOfYCenters.get(2) +
+              "\nX:" + listOfXCenters.get(2) + " Y:" + listOfYCenters.get(2) +
+              "\nX-Delta:" + XHitAreaDelta + " Y-Delta:" + YHitAreaDelta;
+
+
+      // Capture the layout's TextView and set the string as its text
+      PrintDebug(message);
+
+
+      // Get hit areas and print them
+      double distance;
+
+      // Top Left
+      distance = getAreaDistance(frame, listOfXCenters.get(0), listOfYCenters.get(0));
+      if (distance < 100){topLeftTextView.setText(new DecimalFormat("0.##").format(distance));}
+      // Top Center
+      distance = getAreaDistance(frame, listOfXCenters.get(1), listOfYCenters.get(0));
+      if (distance < 100){topCenterTextView.setText(new DecimalFormat("0.##").format(distance));}
+      // Top Right
+      distance = getAreaDistance(frame, listOfXCenters.get(2), listOfYCenters.get(0));
+      if (distance < 100){topRightTextView.setText(new DecimalFormat("0.##").format(distance));}
+      // Center Left
+      distance = getAreaDistance(frame, listOfXCenters.get(0), listOfYCenters.get(1));
+      if (distance < 100){centerLeftTextView.setText(new DecimalFormat("0.##").format(distance));}
+      // Center Center
+      distance = getAreaDistance(frame, listOfXCenters.get(1), listOfYCenters.get(1));
+      if (distance < 100){centerCenterTextView.setText(new DecimalFormat("0.##").format(distance));}
+      // Center Right
+      distance = getAreaDistance(frame, listOfXCenters.get(2), listOfYCenters.get(1));
+      if (distance < 100){centerRightTextView.setText(new DecimalFormat("0.##").format(distance));}
+      // Bottom Left
+      distance = getAreaDistance(frame, listOfXCenters.get(0), listOfYCenters.get(2));
+      if (distance < 100){bottomLeftTextView.setText(new DecimalFormat("0.##").format(distance));}
+      // Bottom Center
+      distance = getAreaDistance(frame, listOfXCenters.get(1), listOfYCenters.get(2));
+      if (distance < 100){bottomCenterTextView.setText(new DecimalFormat("0.##").format(distance));}
+      // Bottom Right
+      distance = getAreaDistance(frame, listOfXCenters.get(2), listOfYCenters.get(2));
+      if (distance < 100){bottomRightTextView.setText(new DecimalFormat("0.##").format(distance));}
+
+
+      // Get the hitArea distance from the midPoint
+      distance = getAreaDistance(frame, cameraWidth/2, cameraHeight/2);
+      if (distance > 100)
+      {
+          droppedFrames++;
+          return;
+      }
+
+      /*String message = "Camera width: " +  cameraWidth + " height: " + cameraHeight +
+              "\nFrame delta = " + new DecimalFormat("#0.###").format(frameTime.getDeltaSeconds()) +
+              "\nMaxFrame delta = " + new DecimalFormat("0.###").format(maxTimeBetweenFrames) +
+              "\nFrames Rendered = " + renderedFrames++ + " Dropped = " + droppedFrames +
+              "\nDistance = " + new DecimalFormat("0.##").format(distance);*/
+
+
   }
 
   void PrintDebug(String msg)
   {
     TextView textView = findViewById(R.id.DebugDisplay);
     textView.setText(msg);
+  }
+
+  double getAreaDistance(Frame frame, int x, int y)
+  {
+      double minDistance = 999;
+      for (int i = x - XHitAreaDelta; i < x + XHitAreaDelta; i++){
+          for (int j = y - YHitAreaDelta; j < y + YHitAreaDelta; j++){
+              List<HitResult> hitResults = frame.hitTest(i, j);
+              if (hitResults.isEmpty())
+              {
+                  continue;
+              }
+
+              double distance = hitResults.get(0).getDistance();
+              if (distance < minDistance)
+              {
+                  minDistance = distance;
+              }
+          }
+      }
+
+      return minDistance;
   }
 }
